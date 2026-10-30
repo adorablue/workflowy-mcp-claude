@@ -90,9 +90,10 @@ Keep this key private. It belongs in your Vercel environment variables, not in y
 This fork hides secrets before they reach the MCP client or the Neon cache:
 
 - `#sec` on a bullet hides it and everything under it.
-- `#nosec` shows one bullet as-is. `#nosecall` shows a bullet and everything under it as-is. `#sec` always wins.
+- `#nosec` shows one bullet as-is. `#nosecall` shows a bullet and everything under it as-is.
+- The nearest tag wins (a deeper tag overrides one further up). On the same bullet, `#sec` wins.
 - Everything else gets greedy auto-detection: labeled passwords, PINs, and keys ("password: ..."), bearer tokens, well-known key prefixes, long hex strings, random-looking tokens, card-like numbers, and SSN-shaped numbers.
-- Hidden text appears as `[REDACTED]`. Edits that would write `[REDACTED]` back, rewrite a hidden field, or add `#nosec`/`#nosecall` are refused.
+- Hidden text appears as `[REDACTED]`. Edits that would write `[REDACTED]` back, rewrite a hidden field, add `#nosec`/`#nosecall`, move a bullet out of a `#sec` area (unless it has `#sec` itself), or move hidden content under `#nosecall` are refused. Other moves are allowed.
 
 Tag changes reach the search cache on the next full sync (automatic when the cache is stale, or via `sync_nodes`). `read_doc` applies them immediately.
 

@@ -5,11 +5,12 @@
 // MCP client or the database.
 //
 // Owner-controlled tags (in a bullet's text or note):
-//   #sec      always hide this bullet and everything under it
-//   #nosec    show this bullet as-is (skip auto-detection for this bullet only)
+//   #sec      hide this bullet and everything under it
+//   #nosec    show this one bullet as-is (its children keep the inherited rule)
 //   #nosecall show this bullet and everything under it as-is
-// #sec always wins over #nosec / #nosecall (on the same bullet or an ancestor).
-// Everything else gets greedy auto-detection.
+// The nearest tag wins: a deeper tag overrides one further up. If #sec and an
+// allow tag sit on the same bullet, #sec wins. Untagged areas get greedy
+// auto-detection.
 
 export const REDACTED = "[REDACTED]";
 export const SECRET_TAG = "sec";
@@ -42,18 +43,26 @@ export function hasAllowTag(text: string): boolean {
   return ALLOW_TAG_RE.test(text) || ALLOW_TREE_TAG_RE.test(text);
 }
 
-/** Decide how to treat one bullet, and what its children inherit. */
+export function hasSecretTag(text: string): boolean {
+  return SECRET_TAG_RE.test(text);
+}
+
+/** Decide how to treat one bullet, and what its children inherit (nearest tag wins). */
 export function nodePolicy(
   texts: Array<string | null | undefined>,
   inherited: Inherited,
 ): { policy: Policy; children: Inherited } {
-  const secret = inherited.secret || anyMatch(texts, SECRET_TAG_RE);
-  const allowAll = inherited.allowAll || anyMatch(texts, ALLOW_TREE_TAG_RE);
-  if (secret) {
-    return { policy: "secret", children: { secret: true, allowAll } };
+  if (anyMatch(texts, SECRET_TAG_RE)) {
+    return { policy: "secret", children: { secret: true, allowAll: false } };
   }
-  const allow = allowAll || anyMatch(texts, ALLOW_TAG_RE);
-  return { policy: allow ? "allow" : "auto", children: { secret: false, allowAll } };
+  if (anyMatch(texts, ALLOW_TREE_TAG_RE)) {
+    return { policy: "allow", children: { secret: false, allowAll: true } };
+  }
+  if (anyMatch(texts, ALLOW_TAG_RE)) {
+    return { policy: "allow", children: inherited };
+  }
+  const policy: Policy = inherited.secret ? "secret" : inherited.allowAll ? "allow" : "auto";
+  return { policy, children: inherited };
 }
 
 /** Fold a root-to-parent chain of bullets into what the next bullet inherits. */
@@ -66,10 +75,6 @@ export function inheritFromChain(
     inherited = nodePolicy(texts, inherited).children;
   }
   return inherited;
-}
-
-export function mergeInherited(a: Inherited, b: Inherited): Inherited {
-  return { secret: a.secret || b.secret, allowAll: a.allowAll || b.allowAll };
 }
 
 /** Placeholder for a fully hidden field; keeps #tags so inheritance still works from the cache. */

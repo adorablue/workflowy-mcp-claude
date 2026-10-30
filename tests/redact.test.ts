@@ -32,16 +32,27 @@ test('ordinary text is left alone', () => {
   ]) assert.equal(redactText(text), text, text);
 });
 
-test('tags: #sec wins, #nosec skips one bullet, #nosecall skips a subtree', () => {
+test('tags: nearest tag wins, #sec wins on the same bullet', () => {
   assert.equal(nodePolicy(['wifi #sec'], ROOT_INHERITED).policy, 'secret');
   assert.equal(nodePolicy(['pw: x #nosec'], ROOT_INHERITED).policy, 'allow');
   assert.equal(nodePolicy(['pw: x #nosec #sec'], ROOT_INHERITED).policy, 'secret');
+  assert.equal(nodePolicy(['x #nosecall', 'note #sec'], ROOT_INHERITED).policy, 'secret');
   assert.equal(nodePolicy(['#second thing'], ROOT_INHERITED).policy, 'auto');
   assert.equal(nodePolicy(['#nosecond'], ROOT_INHERITED).policy, 'auto');
+  // #sec inside #nosecall hides its subtree.
   const tree = nodePolicy(['passwords #nosecall'], ROOT_INHERITED).children;
   assert.equal(nodePolicy(['gmail password: abc'], tree).policy, 'allow');
   const secretTree = nodePolicy(['vault #sec'], tree).children;
   assert.equal(nodePolicy(['anything'], secretTree).policy, 'secret');
+  // #nosecall inside #sec shows its subtree.
+  const reopened = nodePolicy(['public stuff #nosecall'], secretTree);
+  assert.equal(reopened.policy, 'allow');
+  assert.equal(nodePolicy(['child'], reopened.children).policy, 'allow');
+  // #nosec inside #sec shows only that bullet; its children stay hidden.
+  const single = nodePolicy(['service name #nosec'], secretTree);
+  assert.equal(single.policy, 'allow');
+  assert.equal(nodePolicy(['hunter2'], single.children).policy, 'secret');
+  // #nosec in an untagged area: children go back to auto-detection.
   const one = nodePolicy(['x #nosec'], ROOT_INHERITED).children;
   assert.equal(nodePolicy(['password: abc'], one).policy, 'auto');
 });

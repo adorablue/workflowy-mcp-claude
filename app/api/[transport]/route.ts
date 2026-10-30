@@ -28,6 +28,7 @@ import {
   ROOT_INHERITED,
   containsAllowTag,
   containsPlaceholder,
+  hasSecretTag,
   inheritFromChain,
   redactDeepStrings,
   redactDoc,
@@ -1432,6 +1433,51 @@ async function secretGuard(
   }
   const sql = await getDb();
   for (const [index, operation] of operations.entries()) {
+    if (operation.op === "move" && operation.ref && operation.under) {
+      const destination = await cachedInheritance(sql, accountKey, operation.under, true);
+      // Moving a bullet out from under #sec would un-hide it, unless it carries #sec itself.
+      const source = await cachedInheritance(sql, accountKey, operation.ref, false);
+      if (source.secret && !destination.secret) {
+        const own = await sql`
+          SELECT name, note
+          FROM workflowy_nodes
+          WHERE account_key = ${accountKey}
+            AND (id = ${operation.ref} OR right(id, 12) = ${operation.ref})
+          LIMIT 1
+        `;
+        const ownTagged = own.some(
+          (row) =>
+            (typeof row.name === "string" && hasSecretTag(row.name)) ||
+            (typeof row.note === "string" && hasSecretTag(row.note)),
+        );
+        if (!ownTagged) {
+          return `Refusing operations[${index}]: moving a bullet out of a #sec area would reveal it. Ask the user to move it in Workflowy, or move it under another #sec bullet.`;
+        }
+      }
+      // Moving hidden content under #nosecall would reveal it; only the user may do that.
+      if (destination.allowAll) {
+        const hidden = await sql`
+          WITH RECURSIVE subtree AS (
+            SELECT id, name, note, 0 AS depth
+            FROM workflowy_nodes
+            WHERE account_key = ${accountKey}
+              AND (id = ${operation.ref} OR right(id, 12) = ${operation.ref})
+            UNION ALL
+            SELECT child.id, child.name, child.note, subtree.depth + 1
+            FROM workflowy_nodes child
+            JOIN subtree ON child.parent_id = subtree.id
+            WHERE child.account_key = ${accountKey} AND subtree.depth < 100
+          )
+          SELECT 1 FROM subtree
+          WHERE position(${REDACTED} in coalesce(name, '') || ' ' || coalesce(note, '')) > 0
+          LIMIT 1
+        `;
+        if (hidden.length > 0) {
+          return `Refusing operations[${index}]: moving hidden content under a #nosecall bullet would reveal it. Ask the user to move it in Workflowy.`;
+        }
+      }
+      continue;
+    }
     if (operation.op !== "update" || !operation.ref) continue;
     const to = operation.to ?? {};
     if (to.n === undefined && to.d === undefined) continue;

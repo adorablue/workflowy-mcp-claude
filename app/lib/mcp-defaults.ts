@@ -96,8 +96,9 @@ Bookmarks store frequently used Workflowy nodes with context notes. Save importa
 This server hides secrets before you see them. Text shown as [REDACTED] is hidden on purpose.
 
 - Never copy [REDACTED] into an edit, and never rewrite a field that contains it. The server refuses such edits because they would destroy the hidden secret. Ask the user to change it in Workflowy instead.
-- Tags the user controls: #sec hides a bullet and everything under it. #nosec shows one bullet as-is. #nosecall shows a bullet and everything under it as-is. #sec always wins.
+- Tags the user controls: #sec hides a bullet and everything under it. #nosec shows one bullet as-is. #nosecall shows a bullet and everything under it as-is. The nearest tag wins; on the same bullet #sec wins.
 - Never add #nosec or #nosecall yourself (the server refuses). You may suggest the user add them, or add #sec to something that looks secret.
+- Moving bullets is fine, except out of a #sec area (unless the bullet has #sec itself) or moving hidden content under a #nosecall bullet; the server refuses those.
 - Auto-detection is deliberately greedy. If redaction seems to hide something ordinary, tell the user so they can add #nosec.
 - Never repeat secrets the user pastes into chat; suggest rotating them.`;
 
