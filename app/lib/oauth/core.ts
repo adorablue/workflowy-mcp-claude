@@ -30,9 +30,13 @@ export function unsign(value: string, key: string, purpose: string): any {
 }
 export function allowedRedirect(uri: string): boolean {
   // Exact stable ChatGPT callback; callback-specific URLs use one bounded path segment.
+  // Claude (claude.ai web/desktop/mobile) uses one fixed callback; claude.com is documented as a possible future host.
   return uri === 'https://chatgpt.com/connector_platform_oauth_redirect' ||
+    uri === 'https://claude.ai/api/mcp/auth_callback' ||
+    uri === 'https://claude.com/api/mcp/auth_callback' ||
     /^https:\/\/chatgpt\.com\/connector\/oauth\/[A-Za-z0-9_-]{1,200}$/.test(uri);
 }
+const isClaudeRedirect = (uri: string) => uri === 'https://claude.ai/api/mcp/auth_callback' || uri === 'https://claude.com/api/mcp/auth_callback';
 export function registerClient(body: any, key: string) {
   if (!Array.isArray(body.redirect_uris) || body.redirect_uris.length < 1 || body.redirect_uris.length > 5 ||
       body.redirect_uris.some((uri: unknown) => typeof uri !== 'string' || !allowedRedirect(uri))) {
@@ -42,7 +46,7 @@ export function registerClient(body: any, key: string) {
   if (body.grant_types && (!Array.isArray(body.grant_types) || body.grant_types.some((x: unknown) => !['authorization_code', 'refresh_token'].includes(String(x))))) throw new OAuthError('invalid_client_metadata');
   if (body.response_types && (!Array.isArray(body.response_types) || body.response_types.some((x: unknown) => x !== 'code'))) throw new OAuthError('invalid_client_metadata');
   const metadata = { redirect_uris: body.redirect_uris as string[], token_endpoint_auth_method: 'none',
-    grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], client_name: 'ChatGPT', scope: SCOPE };
+    grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], client_name: (body.redirect_uris as string[]).every(isClaudeRedirect) ? 'Claude' : 'ChatGPT', scope: SCOPE };
   // Signed public client IDs are stateless registrations, not credentials or grants.
   return { ...metadata, client_id: sign({ redirects: metadata.redirect_uris, nonce: randomToken() }, key, 'client'), client_id_issued_at: Math.floor(Date.now()/1000) };
 }

@@ -31,6 +31,16 @@ test('DCR rejects external redirects, deceptive hosts, fragments, queries, and u
   }
   assert.throws(()=>registerClient({redirect_uris:[redirect],token_endpoint_auth_method:'client_secret_post'},key));
 });
+test('DCR accepts the fixed Claude callbacks and rejects lookalikes',()=>{
+  for(const url of ['https://claude.ai/api/mcp/auth_callback','https://claude.com/api/mcp/auth_callback']){
+    const reg=registerClient({redirect_uris:[url]},key);
+    assert.equal(reg.client_name,'Claude');
+    assert.deepEqual(reg.redirect_uris,[url]);
+  }
+  for(const url of ['https://claude.ai.evil.example/api/mcp/auth_callback','https://claude.ai/api/mcp/auth_callback?x=1','https://claude.ai/api/mcp/auth_callback#x','http://claude.ai/api/mcp/auth_callback','https://claude.ai@evil.example/api/mcp/auth_callback','https://claude.ai/api/mcp/auth_callback/extra','https://evilclaude.ai/api/mcp/auth_callback']){
+    assert.throws(()=>registerClient({redirect_uris:[url]},key));
+  }
+});
 test('authorization binds client, exact redirect, resource and S256 PKCE',()=>{
   for(const [field,value] of [['client_id',client+'x'],['redirect_uri','https://evil.example'],['resource','https://other.example/api/mcp'],['code_challenge_method','plain'],['scope','other']]){
     const {params}=fixture();params.set(field,value);assert.throws(()=>authorization(params,key,resource));
