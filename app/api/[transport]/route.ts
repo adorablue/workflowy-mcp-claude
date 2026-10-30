@@ -23,6 +23,18 @@ import {
   getWorkflowyApiKey,
   timingSafeStringEqual,
 } from "../admin/_auth";
+import {
+  REDACTED,
+  ROOT_INHERITED,
+  containsAllowTag,
+  containsPlaceholder,
+  inheritFromChain,
+  redactDeepStrings,
+  redactDoc,
+  redactExportNodes,
+  redactNodeFields,
+  type Inherited,
+} from "../../lib/redact";
 
 export const runtime = "nodejs";
 
@@ -534,7 +546,49 @@ async function fetchNodesExport(apiKey: string): Promise<WorkflowyExportResponse
   return { nodes: result.data.nodes as WorkflowyExportNode[] };
 }
 
-function serializeNodesForCache(nodes: WorkflowyExportNode[]) {
+// Inheritance for a node from its cached ancestor chain. Cached rows are already
+// redacted, but #tags are preserved in placeholders so the chain still works.
+async function cachedInheritance(
+  sql: SqlClient,
+  accountKey: string,
+  startId: string | null | undefined,
+  includeStart: boolean,
+): Promise<Inherited> {
+  if (!startId) {
+    return ROOT_INHERITED;
+  }
+  try {
+    const rows = await sql`
+      WITH RECURSIVE path AS (
+        SELECT id, name, note, parent_id, 0 AS depth
+        FROM workflowy_nodes
+        WHERE account_key = ${accountKey}
+          AND (id = ${startId} OR right(id, 12) = ${startId})
+        UNION ALL
+        SELECT parent.id, parent.name, parent.note, parent.parent_id, path.depth + 1
+        FROM workflowy_nodes parent
+        JOIN path ON path.parent_id = parent.id
+        WHERE parent.account_key = ${accountKey} AND path.depth < 100
+      )
+      SELECT name, note, depth
+      FROM path
+      ORDER BY depth DESC
+    `;
+    const chain = rows
+      .filter((row) => includeStart || Number(row.depth) > 0)
+      .map((row) => [
+        typeof row.name === "string" ? row.name : "",
+        typeof row.note === "string" ? row.note : null,
+      ]);
+    return inheritFromChain(chain);
+  } catch {
+    return ROOT_INHERITED;
+  }
+}
+
+function serializeNodesForCache(rawNodes: WorkflowyExportNode[]) {
+  // Redact before anything is written to Neon.
+  const nodes = redactExportNodes(rawNodes);
   const childrenCountMap = new Map<string, number>();
   for (const node of nodes) {
     if (node.parent_id) {
@@ -958,6 +1012,11 @@ async function syncSingleNode(
   const parentId =
     parentIdOverride !== undefined ? parentIdOverride : cachedParentId;
   const childrenCount = Number(existing[0]?.children_count ?? 0);
+  const safe = redactNodeFields(
+    node.name ?? "",
+    node.note ?? null,
+    await cachedInheritance(sql, accountKey, parentId, true),
+  );
 
   await sql`
     INSERT INTO workflowy_nodes (
@@ -976,8 +1035,8 @@ async function syncSingleNode(
     VALUES (
       ${accountKey},
       ${node.id},
-      ${node.name ?? ""},
-      ${node.note ?? null},
+      ${safe.name},
+      ${safe.note},
       ${parentId},
       ${Boolean(node.completed || node.completedAt)},
       ${childrenCount},
@@ -1043,6 +1102,7 @@ async function syncNodeChildren(
         `;
   const existingIds = new Set(existingRows.map((row) => String(row.id)));
   const seenIds = new Set<string>();
+  const parentInherited = await cachedInheritance(sql, accountKey, parentId, true);
 
   for (const node of nodes) {
     if (!node.id) {
@@ -1050,6 +1110,7 @@ async function syncNodeChildren(
     }
 
     seenIds.add(node.id);
+    const safe = redactNodeFields(node.name ?? "", node.note ?? null, parentInherited);
     await sql`
       INSERT INTO workflowy_nodes (
         account_key,
@@ -1067,8 +1128,8 @@ async function syncNodeChildren(
       VALUES (
         ${accountKey},
         ${node.id},
-        ${node.name ?? ""},
-        ${node.note ?? null},
+        ${safe.name},
+        ${safe.note},
         ${parentId},
         ${Boolean(node.completed || node.completedAt)},
         0,
@@ -1204,7 +1265,8 @@ async function refreshCacheAfterEdit(
 async function llmDocRead(
   apiKey: string,
   nodeId: string,
-  depth?: number,
+  depth: number | undefined,
+  accountKey: string,
 ): Promise<ToolResponse> {
   try {
     const safeDepth = clampDepth(depth);
@@ -1218,11 +1280,17 @@ async function llmDocRead(
       return jsonContent({
         error: true,
         http_status: result.status,
-        message: result.data,
+        message: redactDeepStrings(result.data),
       });
     }
 
-    return jsonContent(result.data);
+    // Ancestors in the response decide most inheritance; the cache adds what it knows
+    // about the node's ancestors in case the response omits them.
+    let fromCache: Inherited = ROOT_INHERITED;
+    if (isConcreteNodeId(normalizedNodeId)) {
+      fromCache = await cachedInheritance(await getDb(), accountKey, normalizedNodeId, false);
+    }
+    return jsonContent(redactDoc(result.data, fromCache));
   } catch (error) {
     return jsonContent({ error: true, message: errorMessage(error) });
   }
@@ -1351,14 +1419,54 @@ async function resolveEditableRoot(apiKey: string, root: string): Promise<string
   return concreteRootFromReadResult(result.data) ?? normalizedRoot;
 }
 
+// Secret-safety checks for edits. Returns an error message, or null if allowed.
+async function secretGuard(
+  accountKey: string,
+  operations: LlmDocOperation[],
+): Promise<string | null> {
+  if (containsPlaceholder(operations)) {
+    return `Refusing edit: it contains ${REDACTED}, which would overwrite hidden secret text in Workflowy. Leave redacted text alone or ask the user to edit it.`;
+  }
+  if (containsAllowTag(operations)) {
+    return "Refusing edit: only the user may add #nosec or #nosecall tags. Ask the user to add it in Workflowy.";
+  }
+  const sql = await getDb();
+  for (const [index, operation] of operations.entries()) {
+    if (operation.op !== "update" || !operation.ref) continue;
+    const to = operation.to ?? {};
+    if (to.n === undefined && to.d === undefined) continue;
+    const rows = await sql`
+      SELECT name, note
+      FROM workflowy_nodes
+      WHERE account_key = ${accountKey}
+        AND (id = ${operation.ref} OR right(id, 12) = ${operation.ref})
+      LIMIT 1
+    `;
+    const row = rows[0];
+    if (!row) continue;
+    const nameHidden = typeof row.name === "string" && row.name.includes(REDACTED);
+    const noteHidden = typeof row.note === "string" && row.note.includes(REDACTED);
+    if ((to.n !== undefined && nameHidden) || (to.d !== undefined && noteHidden)) {
+      return `Refusing operations[${index}]: that field contains hidden secret text, and rewriting it would destroy the secret. Ask the user to edit it in Workflowy.`;
+    }
+  }
+  return null;
+}
+
 async function llmDocEdit(
   apiKey: string,
   root: string,
   operations: LlmDocOperation[],
+  accountKey: string,
 ): Promise<ToolResponse> {
   const validationError = validateOperations(operations);
   if (validationError) {
     return jsonContent({ error: true, message: validationError });
+  }
+
+  const guardError = await secretGuard(accountKey, operations);
+  if (guardError) {
+    return jsonContent({ error: true, message: guardError });
   }
 
   const body = {
@@ -1380,12 +1488,12 @@ async function llmDocEdit(
       return jsonContent({
         error: true,
         http_status: result.status,
-        message: result.data,
+        message: redactDeepStrings(result.data),
         request: body,
       });
     }
 
-    return jsonContent({ success: true, response: result.data });
+    return jsonContent({ success: true, response: redactDeepStrings(result.data) });
   } catch (error) {
     return jsonContent({ error: true, message: errorMessage(error), request: body });
   }
@@ -1461,7 +1569,7 @@ async function readUserInstructions(
     return `(Could not read ${AI_INSTRUCTIONS_BOOKMARK}: Workflowy returned ${result.status})`;
   }
 
-  const outline = docToOutline(result.data).trim();
+  const outline = docToOutline(redactDoc(result.data)).trim();
   return outline || `(${AI_INSTRUCTIONS_BOOKMARK} returned no readable text)`;
 }
 
@@ -1644,7 +1752,7 @@ const handler = createMcpHandler(
           node_id: normalizeNodeId(node_id),
           depth: clampDepth(depth),
         },
-        async (apiKey) => llmDocRead(apiKey, node_id, depth),
+        async (apiKey, accountKey) => llmDocRead(apiKey, node_id, depth, accountKey),
       ),
     );
 
@@ -1677,7 +1785,7 @@ const handler = createMcpHandler(
             operation_types: operations.map((operation) => operation.op),
           },
           async (apiKey, accountKey) => {
-            const editResponse = await llmDocEdit(apiKey, root, operations);
+            const editResponse = await llmDocEdit(apiKey, root, operations, accountKey);
             const payload = parseJsonContent(editResponse);
 
             if (isRecord(payload) && payload.success === true) {
@@ -1790,7 +1898,7 @@ const handler = createMcpHandler(
             return jsonContent({
               http_status: result.status,
               ok: result.ok,
-              data: result.data,
+              data: redactDeepStrings(result.data),
             });
           } catch (error) {
             return jsonContent({ error: true, message: errorMessage(error) });

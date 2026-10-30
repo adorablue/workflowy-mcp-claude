@@ -89,7 +89,17 @@ search_nodes searches the hosted cache and auto-syncs when the cache is empty or
 
 ## Bookmarks
 
-Bookmarks store frequently used Workflowy nodes with context notes. Save important locations so future conversations can use node IDs directly.`;
+Bookmarks store frequently used Workflowy nodes with context notes. Save important locations so future conversations can use node IDs directly.
+
+## Secrets
+
+This server hides secrets before you see them. Text shown as [REDACTED] is hidden on purpose.
+
+- Never copy [REDACTED] into an edit, and never rewrite a field that contains it. The server refuses such edits because they would destroy the hidden secret. Ask the user to change it in Workflowy instead.
+- Tags the user controls: #sec hides a bullet and everything under it. #nosec shows one bullet as-is. #nosecall shows a bullet and everything under it as-is. #sec always wins.
+- Never add #nosec or #nosecall yourself (the server refuses). You may suggest the user add them, or add #sec to something that looks secret.
+- Auto-detection is deliberately greedy. If redaction seems to hide something ordinary, tell the user so they can add #nosec.
+- Never repeat secrets the user pastes into chat; suggest rotating them.`;
 
 export const DEFAULT_TOOL_DESCRIPTIONS: Record<McpToolName, string> = {
   list_bookmarks: `START EVERY CONVERSATION BY CALLING THIS TOOL. Returns saved Workflowy locations and the user's custom AI instructions.
