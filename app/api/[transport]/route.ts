@@ -36,6 +36,7 @@ import {
   redactNodeFields,
   type Inherited,
 } from "../../lib/redact";
+import { colorsToMarkers, mapStrings, markersToColors } from "../../lib/format";
 
 export const runtime = "nodejs";
 
@@ -1291,7 +1292,7 @@ async function llmDocRead(
     if (isConcreteNodeId(normalizedNodeId)) {
       fromCache = await cachedInheritance(await getDb(), accountKey, normalizedNodeId, false);
     }
-    return jsonContent(redactDoc(result.data, fromCache));
+    return jsonContent(mapStrings(redactDoc(result.data, fromCache), colorsToMarkers));
   } catch (error) {
     return jsonContent({ error: true, message: errorMessage(error) });
   }
@@ -1517,7 +1518,8 @@ async function llmDocEdit(
 
   const body = {
     root: await resolveEditableRoot(apiKey, root),
-    operations,
+    // Turn {purple}...{/purple} markers back into Workflowy color spans.
+    operations: mapStrings(operations, markersToColors),
   };
 
   try {
@@ -1895,7 +1897,7 @@ const handler = createMcpHandler(
 
             return jsonContent({
               query,
-              results: result.results,
+              results: mapStrings(result.results, colorsToMarkers),
               total_found: result.results.length,
               cache_status: result.cache_status,
               auto_sync: result.auto_sync,

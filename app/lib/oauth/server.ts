@@ -2,7 +2,7 @@ import { createHmac } from 'node:crypto';
 import { neon } from '@neondatabase/serverless';
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminSecret, getWorkflowyApiKey, isAdminAuthenticated, adminSecretMatches, setAdminSessionCookie } from '../../api/admin/_auth';
-import { schema, hash, sign, unsign, randomToken, equal, OAuthError, registerClient, authorization, issueCode, exchange, clientRedirects, revokeToken, verifyAccess, type Sql } from './core';
+import { schema, hash, sign, unsign, randomToken, equal, OAuthError, registerClient, clientLabel, authorization, issueCode, exchange, clientRedirects, revokeToken, verifyAccess, type Sql } from './core';
 
 export function issuer(): string {
   const value = process.env.OAUTH_ISSUER || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : '');
@@ -53,7 +53,7 @@ export function metadata(protectedResource: boolean) {
 }
 const esc = (value: string) => value.replace(/[&<>"']/g, x => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]!));
 function html(body: string, status = 200) {
-  return new NextResponse(`<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>WorkFlowy MCP — 接続の許可</title><style>body{font:16px/1.7 system-ui;background:#111827;color:#f9fafb;max-width:640px;margin:60px auto;padding:24px}input,button{font:inherit;padding:10px;margin:8px 0}input{width:90%}button{cursor:pointer}a{color:#93c5fd}small{overflow-wrap:anywhere}article{border-top:1px solid #475569;padding:16px 0}</style></head><body>${body}</body></html>`, {
+  return new NextResponse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>WorkFlowy MCP — Approve connection</title><style>body{font:16px/1.7 system-ui;background:#111827;color:#f9fafb;max-width:640px;margin:60px auto;padding:24px}input,button{font:inherit;padding:10px;margin:8px 0}input{width:90%}button{cursor:pointer}a{color:#93c5fd}small{overflow-wrap:anywhere}article{border-top:1px solid #475569;padding:16px 0}</style></head><body>${body}</body></html>`, {
     status, // Native form POSTs need a real Origin for CSRF validation; no-referrer makes it null.
     headers: {...baseHeaders,'Referrer-Policy':'strict-origin','Content-Type':'text/html; charset=utf-8','X-Frame-Options':'DENY',
       'Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://chatgpt.com/connector_platform_oauth_redirect https://chatgpt.com/connector/oauth/ https://claude.ai/api/mcp/auth_callback https://claude.com/api/mcp/auth_callback; frame-ancestors 'none'; base-uri 'none'"},
@@ -101,15 +101,16 @@ export async function handle(request: NextRequest, action: string): Promise<Next
       const auth = authorization(params,key(),resource());
       const proof = csrf(request,'authorize',params.toString());
       const signedIn = isAdminAuthenticated(request);
-      const response = html(`<h1>ChatGPTとの接続を許可</h1><p>この接続に、あなたのWorkFlowyの読み取り・検索・追加・編集・削除を許可します。</p><p>検索用データは設定済みのNeonに保存されます。接続は30日で失効し、いつでも<a href="/oauth/connections">接続管理</a>で取り消せます。</p><p>ChatGPTで自分が開始した接続であることを確認してください。</p><small>戻り先: ${esc(auth.redirect)}</small><form method="post" action="/oauth/authorize"><input type="hidden" name="proof" value="${esc(proof.proof)}">${signedIn ? '<p>管理者としてログイン済みです。</p>' : '<p><label>Admin Secret<br><input type="password" name="secret" autocomplete="current-password" required></label></p>'}<button name="decision" value="allow">接続を許可する</button> <button name="decision" value="deny" formnovalidate>キャンセル</button></form>`);
+      const client = clientLabel(auth.redirect);
+      const response = html(`<h1>Allow ${client} to connect</h1><p>This connection can read, search, add, edit, and delete items in your WorkFlowy (secrets are redacted by this server).</p><p>Search data is stored in your configured Neon database. The connection expires after 30 days and can be revoked anytime in <a href="/oauth/connections">Connections</a>.</p><p>Only approve if you started this connection yourself from ${client}.</p><small>Returns to: ${esc(auth.redirect)}</small><form method="post" action="/oauth/authorize"><input type="hidden" name="proof" value="${esc(proof.proof)}">${signedIn ? '<p>You are signed in as the administrator.</p>' : '<p><label>Admin Secret<br><input type="password" name="secret" autocomplete="current-password" required></label></p>'}<button name="decision" value="allow">Allow connection</button> <button name="decision" value="deny" formnovalidate>Cancel</button></form>`);
       setCsrf(response,proof.nonce); return response;
     }
     if (request.method === 'GET' && action === 'connections') {
-      if (!isAdminAuthenticated(request)) return html('<h1>ログインが必要です</h1><p><a href="/">管理画面でログイン</a>した後、このページを開き直してください。</p>',401);
+      if (!isAdminAuthenticated(request)) return html('<h1>Sign-in required</h1><p><a href="/">Sign in to the dashboard</a>, then reopen this page.</p>',401);
       const sql = await db();
-      const grants = await sql`SELECT id,created_at,refresh_expires,revoked FROM workflowy_oauth_grants WHERE owner_key=${owner()} AND code_used ORDER BY created_at DESC LIMIT 100`;
+      const grants = await sql`SELECT id,redirect_uri,created_at,refresh_expires,revoked FROM workflowy_oauth_grants WHERE owner_key=${owner()} AND code_used ORDER BY created_at DESC LIMIT 100`;
       const proof = csrf(request,'revoke','');
-      const response = html(`<h1>ChatGPTの接続管理</h1><p><a href="/">管理画面へ</a></p>${grants.length ? grants.map(g => `<article><b>ChatGPT</b><p>作成: ${esc(String(g.created_at))}<br>期限: ${esc(String(g.refresh_expires))}</p>${g.revoked ? '<p>取り消し済み</p>' : `<form method="post" action="/oauth/connections"><input type="hidden" name="proof" value="${esc(proof.proof)}"><input type="hidden" name="grant" value="${esc(g.id)}"><button>この接続を取り消す</button></form>`}</article>`).join('') : '<p>許可済みの接続はありません。</p>'}`);
+      const response = html(`<h1>Connections</h1><p><a href="/">Back to dashboard</a></p>${grants.length ? grants.map(g => `<article><b>${clientLabel(String(g.redirect_uri))}</b><p>Created: ${esc(String(g.created_at))}<br>Expires: ${esc(String(g.refresh_expires))}</p>${g.revoked ? '<p>Revoked</p>' : `<form method="post" action="/oauth/connections"><input type="hidden" name="proof" value="${esc(proof.proof)}"><input type="hidden" name="grant" value="${esc(g.id)}"><button>Revoke this connection</button></form>`}</article>`).join('') : '<p>No approved connections.</p>'}`);
       setCsrf(response,proof.nonce); return response;
     }
     if (request.method !== 'POST') return json({error:'invalid_request'},405);
@@ -132,8 +133,8 @@ export async function handle(request: NextRequest, action: string): Promise<Next
       else {
         if(params.get('decision') !== 'allow')throw new OAuthError('invalid_request');
         if(!isAdminAuthenticated(request)) {
-          if(!await loginAllowed(request))return html('<h1>試行回数が上限に達しました</h1><p>15分後にChatGPTから接続をやり直してください。</p>',429);
-          if(!adminSecretMatches(params.get('secret') || ''))return html('<h1>ログインできませんでした</h1><p>Admin Secretを確認し、戻ってもう一度お試しください。</p>',401);
+          if(!await loginAllowed(request))return html('<h1>Too many attempts</h1><p>Wait 15 minutes, then start the connection again from your AI app.</p>',429);
+          if(!adminSecretMatches(params.get('secret') || ''))return html('<h1>Sign-in failed</h1><p>Check your Admin Secret, go back, and try again.</p>',401);
           newLogin=true;
         }
         url.searchParams.set('code',await issueCode(await db(),owner(),auth));

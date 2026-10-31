@@ -36,7 +36,8 @@ export function allowedRedirect(uri: string): boolean {
     uri === 'https://claude.com/api/mcp/auth_callback' ||
     /^https:\/\/chatgpt\.com\/connector\/oauth\/[A-Za-z0-9_-]{1,200}$/.test(uri);
 }
-const isClaudeRedirect = (uri: string) => uri === 'https://claude.ai/api/mcp/auth_callback' || uri === 'https://claude.com/api/mcp/auth_callback';
+export const isClaudeRedirect = (uri: string) => uri === 'https://claude.ai/api/mcp/auth_callback' || uri === 'https://claude.com/api/mcp/auth_callback';
+export const clientLabel = (uri: string) => isClaudeRedirect(uri) ? 'Claude' : 'ChatGPT';
 export function registerClient(body: any, key: string) {
   if (!Array.isArray(body.redirect_uris) || body.redirect_uris.length < 1 || body.redirect_uris.length > 5 ||
       body.redirect_uris.some((uri: unknown) => typeof uri !== 'string' || !allowedRedirect(uri))) {

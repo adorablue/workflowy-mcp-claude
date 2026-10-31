@@ -100,7 +100,11 @@ This server hides secrets before you see them. Text shown as [REDACTED] is hidde
 - Never add #nosec or #nosecall yourself (the server refuses). You may suggest the user add them, or add #sec to something that looks secret.
 - Moving bullets is fine, except out of a #sec area (unless the bullet has #sec itself) or moving hidden content under a #nosecall bullet; the server refuses those.
 - Auto-detection is deliberately greedy. If redaction seems to hide something ordinary, tell the user so they can add #nosec.
-- Never repeat secrets the user pastes into chat; suggest rotating them.`;
+- Never repeat secrets the user pastes into chat; suggest rotating them.
+
+## Colored text
+
+Colored text appears as markers like {purple}text{/purple} or {red bg-yellow}text{/red bg-yellow} (bg- means highlight). Keep the markers when editing such text, and use them to add color; the server converts them to Workflowy colors. Colors: red, orange, yellow, green, blue, purple, pink, sky, teal, gray.`;
 
 export const DEFAULT_TOOL_DESCRIPTIONS: Record<McpToolName, string> = {
   list_bookmarks: `START EVERY CONVERSATION BY CALLING THIS TOOL. Returns saved Workflowy locations and the user's custom AI instructions.

@@ -1250,7 +1250,7 @@ export default function Home() {
           {activeSection === "setup" && (
             <>
               <Header title="Setup" subtitle="Generate the remote MCP configuration for your client." />
-              <p>ChatGPT: choose OAuth and enter this server’s /api/mcp URL. Leave Client ID and Client Secret blank for automatic registration, then approve the connection as the administrator.</p>
+              <p>Claude or ChatGPT: add a custom connector with this server’s /api/mcp URL (choose OAuth in ChatGPT). Leave Client ID and Client Secret blank for automatic registration, then approve the connection as the administrator.</p>
               <p><a href="/oauth/connections">Manage or revoke ChatGPT connections</a></p>
               <div className={styles.tabs}>
                 <button className={`${styles.tab} ${setupTab === "claude" ? styles.tabActive : ""}`} onClick={() => setSetupTab("claude")} type="button">

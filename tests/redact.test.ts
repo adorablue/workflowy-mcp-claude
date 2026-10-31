@@ -113,3 +113,18 @@ test('edit guards detect placeholders and allow tags', () => {
   assert.ok(containsAllowTag([{ op: 'insert', items: [{ n: 'a', c: [{ n: 'b #nosecall' }] }] }]));
   assert.ok(!containsAllowTag([{ op: 'insert', items: [{ n: 'add #sec' }] }]));
 });
+
+test('links stay readable; only credentials and secret-named params are hidden', () => {
+  for (const link of [
+    'https://www.instagram.com/reel/DAbC12xYz_q/?utm_source=ig_web_copy_link&igsh=MzRlODBiNWFlZA==',
+    'https://www.instagram.com/p/CxYz123AbCdEfGhIjKlMn/',
+    'see https://youtu.be/dQw4w9WgXcQ?si=AbCdEfGh12345678XyZw ok',
+    'https://example.com/file/d3bd4736b004693c509d315d89a86bfdf0e77a07',
+  ]) assert.equal(redactText(link), link, link);
+  assert.equal(
+    redactText('https://api.x.com/v1?access_token=abcDEF123456&x=1'),
+    `https://api.x.com/v1?access_token=${REDACTED}&x=1`,
+  );
+  assert.equal(redactText('login: https://site.com/a'), 'login: ' + REDACTED);
+  assert.equal(redactText('pw hunter2 https://insta.com/p/AbC123dEf456GhI789jKl'), 'pw hunter2 https://insta.com/p/AbC123dEf456GhI789jKl');
+});

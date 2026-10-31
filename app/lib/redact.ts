@@ -142,6 +142,17 @@ const KEYWORD_LINE_RE = new RegExp(
   "gi",
 );
 
+const URL_RE = /\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"'`)\]]+/gi;
+const SECRET_PARAM_RE =
+  /([?&#;](?:access_token|refresh_token|id_token|token|api[_-]?key|apikey|key|secret|client_secret|password|passwd|pwd|pass|auth|authorization|signature|sig|session|sessionid|jwt)=)([^&#\s]*)/gi;
+
+/** Links stay readable; only embedded credentials and secret-named query params are hidden. */
+function redactUrl(url: string): string {
+  return url
+    .replace(/^([a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:)([^\s@/]+)(@)/i, `$1${REDACTED}$3`)
+    .replace(SECRET_PARAM_RE, (_m, name: string, value: string) => (value ? `${name}${REDACTED}` : name));
+}
+
 /** Greedy auto-detection. Over-redacting is intended; the owner can add #nosec. */
 export function redactText(text: string): string {
   if (!text) return text;
@@ -152,8 +163,19 @@ export function redactText(text: string): string {
     /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g,
     REDACTED,
   );
-  // Credentials embedded in URLs: scheme://user:pass@host
-  out = out.replace(/(\b[a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:)([^\s@/]+)(@)/gi, `$1${REDACTED}$3`);
+  // Set links aside so the generic token rules below never touch them.
+  const urls: string[] = [];
+  out = out.replace(URL_RE, (url) => {
+    urls.push(redactUrl(url));
+    return `\u0000${urls.length - 1}\u0000`;
+  });
+  out = redactLoose(out);
+  // Restore links (a labeled line like "login: <link>" may have hidden one entirely).
+  return out.replace(/\u0000(\d+)\u0000/g, (_m, index: string) => urls[Number(index)] ?? REDACTED);
+}
+
+function redactLoose(text: string): string {
+  let out = text;
   // "password: ...", "api key = ...", "pin is ..." -> hide the rest of the line.
   out = out.replace(KEYWORD_LINE_RE, (_m, label: string) => `${label}${REDACTED}`);
   // Bearer tokens.
